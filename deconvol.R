@@ -1,152 +1,146 @@
-suppressPackageStartupMessages(library(CETYGO))
-suppressPackageStartupMessages(library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19))
-suppressPackageStartupMessages(library(rtracklayer))
 suppressPackageStartupMessages(library(HiBED))
-suppressPackageStartupMessages(library(minfi))
+suppressPackageStartupMessages(library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19))
 suppressPackageStartupMessages(library(IlluminaHumanMethylationEPICv2anno.20a1.hg38))
-suppressPackageStartupMessages(library(IlluminaHumanMethylationEPICv2manifest))
+suppressPackageStartupMessages(library(rtracklayer))
 suppressPackageStartupMessages(library(data.table))
+suppressPackageStartupMessages(library(FlowSorted.Blood.EPIC))
+suppressPackageStartupMessages(library(SummarizedExperiment))
 
+setwd("/projects2/DiffMeth")
+
+# ── 1. HiBED layer probe IDs ──────────────────────────────────────────────────
 data(HiBED_Libraries)
-
-# Get all unique probe IDs across all IDOL sub-models
-all_probes <- unique(unlist(lapply(modelBrainCoef$IDOL, rownames)))
-
-# Get hg19 coordinates for these probes
-anno <- getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
-marker_anno <- anno[all_probes[all_probes %in% rownames(anno)], 
-                    c("chr","pos")]
-marker_anno <- marker_anno[!is.na(marker_anno$chr), ]
-
-# Now liftover hg19 -> hg38
-chain <- import.chain("/projects2/DiffMeth/hg19ToHg38.over.chain")
-
-marker_gr <- GRanges(
-    seqnames = marker_anno$chr,
-    ranges = IRanges(start=marker_anno$pos, end=marker_anno$pos),
-    probe_id = rownames(marker_anno)
-)
-
-marker_hg38 <- unlist(liftOver(marker_gr, chain))
-
-# Now check against your RRBS coverage - use CA192 as representative
-ca192 <- read.table("CA192/CA192_GRCh38_CpG.bed",
-                    col.names=c("chr","start","end","beta","coverage"))
-ca192$coord <- paste(ca192$chr, ca192$start, sep=":")
-
-marker_coords_hg38 <- paste(as.character(seqnames(marker_hg38)),
-                             start(marker_hg38), sep=":")
-
-overlap <- sum(marker_coords_hg38 %in% ca192$coord)
-cat("Total unique marker CpGs:", length(all_probes), "\n")
-cat("With hg19 coordinates:", nrow(marker_anno), "\n") 
-cat("Survived liftover to hg38:", length(marker_hg38), "\n")
-cat("Covered in your RRBS:", overlap, "\n")
-cat("Overlap %:", round(overlap/length(marker_hg38)*100, 1), "%\n")
-
-l1 <- rownames(HiBED_Libraries$Library_Layer1)
-l2a <- rownames(HiBED_Libraries$Library_Layer2A)
+l1  <- rownames(HiBED_Libraries$Library_Layer1)
 l2b <- rownames(HiBED_Libraries$Library_Layer2B)
-l2c <- rownames(HiBED_Libraries$Library_Layer2C)
 
-cat("Layer 1 markers:", length(l1), "\n")
-cat("Layer 2A markers:", length(l2a), "\n")
-cat("Layer 2B markers:", length(l2b), "\n")
-cat("Layer 2C markers:", length(l2c), "\n")
+# ── 2. Annotation: hybrid hg38 coordinates ───────────────────────────────────
+# EPICv2 has native hg38; strip suffix to match probe IDs
+# Fall back to hg19 liftover for probes absent from EPICv2
+anno_hg19    <- getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+anno_v2      <- getAnnotation(IlluminaHumanMethylationEPICv2anno.20a1.hg38)
+anno_v2_base <- sub("_.*$", "", rownames(anno_v2))
+chain        <- import.chain("/projects2/DiffMeth/hg19ToHg38.over.chain")
 
-# Look at which specific Layer 1 markers you have
-l1_anno <- anno[l1[l1 %in% rownames(anno)], c("chr","pos")]
-l1_gr <- GRanges(seqnames=l1_anno$chr,
-                 ranges=IRanges(start=l1_anno$pos, end=l1_anno$pos),
-                 probe_id=rownames(l1_anno))
-l1_hg38 <- unlist(liftOver(l1_gr, chain))
-l1_coords <- paste(as.character(seqnames(l1_hg38)),
-                   start(l1_hg38), sep=":")
+get_hg38_coords <- function(probes, anno_hg19, anno_v2, anno_v2_base, chain) {
+    in_v2    <- probes[probes %in% anno_v2_base]
+    v2_idx   <- match(in_v2, anno_v2_base)
+    coords_v2 <- data.frame(
+        probe_id = in_v2,
+        chr      = as.character(anno_v2$chr[v2_idx]),
+        pos      = anno_v2$pos[v2_idx],
+        stringsAsFactors = FALSE
+    )
+    not_v2        <- probes[!probes %in% anno_v2_base]
+    not_v2_in_hg19 <- not_v2[not_v2 %in% rownames(anno_hg19)]
+    coords_lift <- NULL
+    if (length(not_v2_in_hg19) > 0) {
+        gr <- GRanges(
+            seqnames = anno_hg19[not_v2_in_hg19, "chr"],
+            ranges   = IRanges(start = anno_hg19[not_v2_in_hg19, "pos"],
+                               end   = anno_hg19[not_v2_in_hg19, "pos"]),
+            probe_id = not_v2_in_hg19
+        )
+        gr_hg38 <- unlist(liftOver(gr, chain))
+        coords_lift <- data.frame(
+            probe_id = gr_hg38$probe_id,
+            chr      = as.character(seqnames(gr_hg38)),
+            pos      = start(gr_hg38),
+            stringsAsFactors = FALSE
+        )
+    }
+    coords       <- rbind(coords_v2, coords_lift)
+    coords$coord <- paste(coords$chr, coords$pos, sep=":")
+    coords
+}
 
-# Extract probe IDs from metadata column
-l1_coords_hg38 <- paste(as.character(seqnames(l1_hg38)),
-                         start(l1_hg38), sep=":")
+l1_coords  <- get_hg38_coords(l1,  anno_hg19, anno_v2, anno_v2_base, chain)
+l2b_coords <- get_hg38_coords(l2b, anno_hg19, anno_v2, anno_v2_base, chain)
 
-# Look at which specific Layer 1 markers you have
-l2b_anno <- anno[l2b[l2b %in% rownames(anno)], c("chr","pos")]
-l2b_gr <- GRanges(seqnames=l2b_anno$chr,
-                 ranges=IRanges(start=l2b_anno$pos, end=l2b_anno$pos),
-                 probe_id=rownames(l2b_anno))
-l2b_hg38 <- unlist(liftOver(l2b_gr, chain))
-l2b_coords <- paste(as.character(seqnames(l2b_hg38)),
-                   start(l2b_hg38), sep=":")
+cat("Layer 1 probes with hg38 coords:", nrow(l1_coords), "\n")
+cat("Layer 2B probes with hg38 coords:", nrow(l2b_coords), "\n")
 
-# Extract probe IDs from metadata column
-l2b_coords_hg38 <- paste(as.character(seqnames(l2b_hg38)),
-                         start(l2b_hg38), sep=":")
-
-bed_file <- list("CA192/CA192_GRCh38_CpG.bed")
-ca192_rrbs <- rbindlist(lapply(bed_file, function(f) {
-    fread(f, col.names=c("chr","start","end","beta","coverage"))
-}))
-rrbs_coords <- unique(paste(ca192_rrbs$chr, ca192_rrbs$start, sep=":"))
-cat("Total unique CpGs across sample:", length(rrbs_coords), "\n")
-
-# Match against your RRBS coords
-covered_idx <- l1_coords_hg38 %in% rrbs_coords
-recovered_probes <- l1_hg38$probe_id[covered_idx]
-cat("Recovered Layer 1 probes:\n")
-print(recovered_probes)
-cat("Count:", length(recovered_probes), "\n")
-
-assay(HiBED_Libraries$Library_Layer1)[recovered_probes, ]
-
-# Match against your RRBS coords
-covered_idx_2b <- l2b_coords_hg38 %in% rrbs_coords
-recovered_probes_2b <- l2b_hg38$probe_id[covered_idx]
-cat("Recovered Layer 2b probes:\n")
-print(recovered_probes_2b)
-cat("Count:", length(recovered_probes_2b), "\n")
-
-assay(HiBED_Libraries$Library_Layer2B)[recovered_probes_2b, ]
-
----------------
-
-# Which ones did you recover?
-recovered_probes <- names(l1_hg38)[l1_coords %in% rrbs_coords]
-cat("Recovered Layer 1 probes:\n")
-print(recovered_probes)
-
-# Look at their methylation values in the reference
-assay(HiBED_Libraries$Library_Layer1)[recovered_probes, ]
-
-
-# Read each sample's CpG bed and extract beta for those coordinates
-sample_beds <- list(
+# ── 3. Sample file paths ──────────────────────────────────────────────────────
+bucket1_files <- c(
     CA192 = "CA192/CA192_GRCh38_CpG.bed",
     CA346 = "CA346/CA346_GRCh38_CpG.bed",
     CB239 = "CB239/CB239_GRCh38_CpG.bed",
     CC249 = "CC249/CC249_GRCh38_CpG.bed",
     CE167 = "CE167/CE167_GRCh38_CpG.bed",
-    CE234 = "CE234/CE234_GRCh38_CpG.bed",
-    LG30  = "LG30/LG30_GRCh38_CpG.bed",
-    LG31  = "LG31/LG31_GRCh38_CpG.bed",
-    LG52  = "LG52/LG52_GRCh38_CpG.bed"
+    CE234 = "CE234/CE234_GRCh38_CpG.bed"
+)
+bucket2_files <- c(
+    LG30 = "LG30/LG30_GRCh38_CpG.bed",
+    LG31 = "LG31/LG31_GRCh38_CpG.bed",
+    LG52 = "LG52/LG52_GRCh38_CpG.bed"
 )
 
+# ── 4. Pool betas within bucket (coverage-weighted mean) ─────────────────────
+pool_bucket <- function(bed_files, probe_coords) {
+    all_betas <- lapply(names(bed_files), function(sname) {
+        bed <- fread(bed_files[[sname]],
+                     col.names=c("chr","start","end","beta","coverage"))
+        bed$coord <- paste(bed$chr, bed$start, sep=":")
+        merged <- merge(
+            as.data.table(probe_coords)[, .(coord, probe_id)],
+            bed[, .(coord, beta, coverage)],
+            by="coord", all.x=TRUE
+        )
+        merged$sample <- sname
+        merged
+    })
+    combined <- rbindlist(all_betas)
+    combined[!is.na(beta), .(
+        beta_pooled = weighted.mean(beta, coverage),
+        n_samples   = .N
+    ), by=.(probe_id)]
+}
 
-# What coordinate did cg15322932 lift over to?
-idx <- which(l1_hg38$probe_id == "cg15322932")
-cat("hg38 coordinate:", as.character(seqnames(l1_hg38[idx])),
-    start(l1_hg38[idx]), "\n")
+b1_l1  <- pool_bucket(bucket1_files, l1_coords)
+b2_l1  <- pool_bucket(bucket2_files, l1_coords)
+b1_l2b <- pool_bucket(bucket1_files, l2b_coords)
+b2_l2b <- pool_bucket(bucket2_files, l2b_coords)
 
-# What does CA192 have near that position?
-ca192 <- fread("CA192/CA192_GRCh38_CpG.bed",
-               col.names=c("chr","start","end","beta","coverage"))
-ca192$coord <- paste(ca192$chr, ca192$start, sep=":")
+# ── 5. Build beta matrices ────────────────────────────────────────────────────
+make_beta_matrix <- function(b1, b2, all_probes) {
+    m <- matrix(NA, nrow=length(all_probes), ncol=2,
+                dimnames=list(all_probes, c("Bucket1_2024","Bucket2_2026")))
+    m[b1$probe_id, "Bucket1_2024"] <- b1$beta_pooled
+    m[b2$probe_id, "Bucket2_2026"] <- b2$beta_pooled
+    m
+}
 
-# Check the exact coordinate
-target_coord <- paste(as.character(seqnames(l1_hg38[idx])),
-                      start(l1_hg38[idx]), sep=":")
-cat("Looking for:", target_coord, "\n")
-cat("Found in CA192:", target_coord %in% ca192$coord, "\n")
+beta_l1  <- make_beta_matrix(b1_l1,  b2_l1,  l1_coords$probe_id)
+beta_l2b <- make_beta_matrix(b1_l2b, b2_l2b, l2b_coords$probe_id)
 
-# Look at nearby positions in case of off-by-one
-target_pos <- start(l1_hg38[idx])
-ca192[abs(ca192$start - target_pos) < 5 &
-      ca192$chr == as.character(seqnames(l1_hg38[idx])), ]
+# ── 6. Identify shared markers (covered in both buckets) ─────────────────────
+shared_l1  <- intersect(b1_l1$probe_id,  b2_l1$probe_id)
+shared_l2b <- intersect(b1_l2b$probe_id, b2_l2b$probe_id)
+cat("Layer 1 shared markers:", length(shared_l1), "\n")
+cat("Layer 2B shared markers:", length(shared_l2b), "\n")
+
+# ── 7. Deconvolve using shared markers only ───────────────────────────────────
+Library_Layer1  <- as.data.frame(assay(HiBED_Libraries$Library_Layer1,  "counts"))
+Library_Layer2B <- as.data.frame(assay(HiBED_Libraries$Library_Layer2B, "counts"))
+
+result_l1 <- projectCellType_CP(
+    beta_l1[shared_l1, , drop=FALSE],
+    as.matrix(Library_Layer1[shared_l1, ]),
+    lessThanOne = TRUE
+)
+cat("\nLayer 1 deconvolution (shared markers only):\n")
+print(result_l1)
+
+result_l2b <- projectCellType_CP(
+    beta_l2b[shared_l2b, , drop=FALSE],
+    as.matrix(Library_Layer2B[shared_l2b, ]),
+    lessThanOne = TRUE
+)
+cat("\nLayer 2B deconvolution (shared markers only):\n")
+print(result_l2b)
+
+# ── 8. Summary for use as methylKit covariates ────────────────────────────────
+cat("\n── Glial fractions for use as covariates ──\n")
+cat("Bucket1_2024 Glial:", round(result_l1["Bucket1_2024","Glial"], 4), "\n")
+cat("Bucket2_2026 Glial:", round(result_l1["Bucket2_2026","Glial"], 4), "\n")
+cat("Bucket1_2024 Neuronal:", round(result_l1["Bucket1_2024","Neuronal"], 4), "\n")
+cat("Bucket2_2026 Neuronal:", round(result_l1["Bucket2_2026","Neuronal"], 4), "\n")
