@@ -35,12 +35,108 @@ myobj <- methRead(
 
 # ── 3. Filter, normalize, unite ───────────────────────────────────────────────
 filtered   <- filterByCoverage(myobj, lo.count=10, hi.perc=99.9)
+
 normalized <- normalizeCoverage(filtered)
 united     <- unite(normalized, min.per.group=3L)
-
-# ── 4. Tile-level objects ─────────────────────────────────────────────────────
 united_tiles <- tileMethylCounts(normalized) |>
     unite(min.per.group=3L)
+
+# ── 4. adding QC:  answering Sarah's question ───────────────────────────────────────────
+
+# Q1: filterByCoverage parameters used
+cat("\n── Coverage filter parameters ──\n")
+cat("lo.count = 10 (minimum coverage)\n")
+cat("hi.perc = 99.9 (top 0.1% excluded as potential PCR artifacts)\n")
+
+# Q2: Coverage distribution before and after filtering
+pdf("methylkit_QC_coverage.pdf", width=12, height=8)
+
+# Before filtering - per sample coverage summary
+cat("\n── Coverage summary BEFORE filtering ──\n")
+for (i in seq_along(myobj)) {
+    d <- getData(myobj[[i]])
+    cat(sample_ids[[i]], "- median:", median(d$coverage),
+        "mean:", round(mean(d$coverage), 1),
+        "max:", max(d$coverage), "\n")
+}
+
+# Plot coverage distributions before filtering
+par(mfrow=c(3,3), mar=c(4,4,2,1))
+for (i in seq_along(myobj)) {
+    d <- getData(myobj[[i]])
+    hist(log10(d$coverage + 1), breaks=50,
+         main=paste(sample_ids[[i]], "pre-filter"),
+         xlab="log10(coverage + 1)", col="steelblue", border=NA)
+}
+dev.off()
+
+# After filtering
+pdf("methylkit_QC_coverage_postfilter.pdf", width=12, height=8)
+cat("\n── Coverage summary AFTER filtering ──\n")
+for (i in seq_along(filtered)) {
+    d <- getData(filtered[[i]])
+    cat(sample_ids[[i]], "- median:", median(d$coverage),
+        "mean:", round(mean(d$coverage), 1),
+        "max:", max(d$coverage),
+        "sites retained:", nrow(d), "\n")
+}
+
+par(mfrow=c(3,3), mar=c(4,4,2,1))
+for (i in seq_along(filtered)) {
+    d <- getData(filtered[[i]])
+    hist(log10(d$coverage + 1), breaks=50,
+         main=paste(sample_ids[[i]], "post-filter"),
+         xlab="log10(coverage + 1)", col="coral", border=NA)
+}
+dev.off()
+
+# Q3: Per-tile coverage by sample from united_tiles
+cat("\n── Per-tile coverage summary (united_tiles) ──\n")
+tile_data <- getData(united_tiles)
+cov_cols  <- grep("coverage", names(tile_data), value=TRUE)
+cat("Coverage columns:", paste(cov_cols, collapse=", "), "\n")
+print(summary(tile_data[, cov_cols]))
+
+# Write per-tile coverage table
+cov_table <- tile_data[, c("chr","start","end", cov_cols)]
+write.table(cov_table, "methylkit_tile_coverage_by_sample.tsv",
+            sep="\t", quote=FALSE, row.names=FALSE)
+cat("Per-tile coverage written to methylkit_tile_coverage_by_sample.tsv\n")
+
+# Normalization check - global methylation before/after
+pdf("methylkit_QC_normalization.pdf", width=10, height=5)
+par(mfrow=c(1,2))
+
+# Before normalization
+pre_meth <- sapply(filtered, function(x) {
+    d <- getData(x)
+    sum(d$numCs) / sum(d$coverage)
+})
+names(pre_meth) <- unlist(sample_ids)
+barplot(pre_meth * 100, las=2,
+        col=c(rep("steelblue",6), rep("coral",3)),
+        ylab="Global CpG methylation %",
+        main="Before normalization",
+        ylim=c(0, max(pre_meth * 100) * 1.2))
+
+# After normalization
+post_meth <- sapply(normalized, function(x) {
+    d <- getData(x)
+    sum(d$numCs) / sum(d$coverage)
+})
+names(post_meth) <- unlist(sample_ids)
+barplot(post_meth * 100, las=2,
+        col=c(rep("steelblue",6), rep("coral",3)),
+        ylab="Global CpG methylation %",
+        main="After normalization",
+        ylim=c(0, max(post_meth * 100) * 1.2))
+dev.off()
+
+cat("\nQC files written:\n")
+cat("  methylkit_QC_coverage.pdf\n")
+cat("  methylkit_QC_coverage_postfilter.pdf\n")
+cat("  methylkit_QC_normalization.pdf\n")
+cat("  methylkit_tile_coverage_by_sample.tsv\n")
 
 # ── 5. Unadjusted differential methylation ───────────────────────────────────
 message("Running unadjusted DM...")
@@ -50,6 +146,11 @@ dm_tiles_unadj <- calculateDiffMeth(
     mc.cores       = 8
 )
 
+
+#sig_unadj_q010       <- getMethylDiff(dm_tiles_unadj, difference=10, qvalue=0.10)
+#write.table(getData(sig_unadj_q010), "sig_tiles_unadjusted_q010.tsv",
+#            sep="\t", quote=FALSE, row.names=FALSE)
+
 sig_unadj       <- getMethylDiff(dm_tiles_unadj, difference=10, qvalue=0.05)
 sig_unadj_hyper <- getMethylDiff(dm_tiles_unadj, difference=10, qvalue=0.05, type="hyper")
 sig_unadj_hypo  <- getMethylDiff(dm_tiles_unadj, difference=10, qvalue=0.05, type="hypo")
@@ -58,6 +159,7 @@ cat("\n── Unadjusted results ──\n")
 cat("Total significant tiles:", nrow(sig_unadj), "\n")
 cat("Hyper (2026 > 2024):", nrow(sig_unadj_hyper), "\n")
 cat("Hypo  (2026 < 2024):", nrow(sig_unadj_hypo), "\n")
+
 
 # ── 6. Glial-adjusted differential methylation ───────────────────────────────
 message("Running glial-adjusted DM...")
