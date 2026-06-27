@@ -2,8 +2,8 @@
 
 Notes-level record of the technical problems hit and the reasoning behind the
 choices, across all phases of the toxo RRBS work (phase-1 9-sample cortex →
-phase-2 23-sample multi-tissue). Not comprehensive — a skeleton to mod with the
-activities I didn't narrate. Roughly chronological within each area.
+phase-2 23-sample multi-tissue). Not comprehensive — early notes to mod with the
+activities recorded elsewhere. Roughly chronological within each area.
 
 ---
 
@@ -23,8 +23,7 @@ start/end coordinates. With no UMIs, you cannot distinguish PCR duplicates from
 biological stacking — deduplicating systematically wipes coverage, worst at the
 high-methylation regions that are most interesting. A prior consultant ran
 aggressive dedup on the 2024 data and zeroed it to ~no coverage (the data Sarah
-couldn't use). First pass here did NOT deduplicate at all; that alone produced
-usable data. (Standard-correct practice; don't owe a justification for it.)
+couldn't use).
 
 **MQ filtering is already handled by biscuit.** Ran a parallel arm with
 `samtools view -q 30` pre-filtering to test whether low-MQ reads drove results.
@@ -179,16 +178,6 @@ within-tissue the bias cancels, so NNLS stands. (LG30/LG52 at ~41% neuron =
 plausibly clean grey-matter dissection, top-of-range but not alarming; don't
 over-read the exact value — a few points could be compression bias.)
 
-**USMC range analogy (why consistent-but-biased beats inconsistent-but-
-sometimes-accurate).** Teach the non-hunters to group tight first, THEN adjust
-the sights — a consistent-but-offset shooter is correctable; an inconsistent-
-but-sometimes-accurate one is a lost cause, no systematic offset to dial out.
-NNLS = tight group, sights adjusted via Guintivano. scMD ensemble = scattered,
-can't be sighted in. Re-run determinism catches non-reproducibility; Guintivano
-catches a consistently-WRONG stack (mis-built BLAS) that re-run determinism
-can't. Built the Guintivano check in as a GATE: the deconv script refuses to
-run (stop, r < 0.99) if the stack stops recovering known truth.
-
 ---
 
 ## Final pipeline shape (phase 2)
@@ -221,11 +210,10 @@ run (stop, r < 0.99) if the stack stops recovering known truth.
 
 Data is holy; inputs reproducible/versioned; scripts self-contained and runnable
 cold from disk (no session state — the scMD warm-session table is exactly the
-anti-pattern). Loud failure over silent fallback (`ln -sn` not `-sf`; the
+anti-pattern). Loud failure over silent fallback (the
 Guintivano gate stops rather than emitting a bad number; QC drives a settings
 file that functions read else scream-and-die). Settings/manifests exported as
 first-class deliverables shipped WITH results, in the same space as the tables.
 Provenance written in phenomenon-language (TSS enrichment, percentMT, neuron
 fraction), legible to a stranger in 2077 who's never heard of the tool. Route
-around opacity rather than trust it ("pug metaphor": not angry at the dog, angry
-at the breeding decision).
+around opacity rather than trust it.
