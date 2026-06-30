@@ -47,21 +47,21 @@ POS_BG      <- c("2024_BG_CA192","2024_BG_CA346","2024_BG_CB239","2024_BG_CC249"
 NEG2026_CC  <- c("2026_CC_LG30","2026_CC_LG31","2026_CC_LG52")
 
 comparisons <- list(
-  #comp1_ART_neg2024_vs_neg2026 = list(
-  #  keys0 = NEG2024_FMC, keys1 = NEG2026_CC,
-  #  label0 = "2024neg_onART_FMC", label1 = "2026neg_offART_CC",
-  #  note   = "Both toxo-negative; contrast is ART/cohort/region, NOT toxo."
-  #),
-  #comp2_toxo_pos_vs_neg_CC = list(
-  #  keys0 = NEG2024_FMC, keys1 = POS_CC,
-  #  label0 = "neg_onART_FMC", label1 = "pos_offART_CC",
-  #  note   = "Toxo contrast, confounded with ART (pos off-ART, neg on-ART)."
-  #),
-  #comp3_toxo_pos_vs_neg_BG = list(
-  #  keys0 = NEG2024_BG, keys1 = POS_BG,
-  #  label0 = "neg_onART_BG", label1 = "pos_offART_BG",
-  #  note   = "Toxo contrast (BG), confounded with ART (pos off-ART, neg on-ART)."
-  #)
+  comp1_ART_neg2024_vs_neg2026 = list(
+    keys0 = NEG2024_FMC, keys1 = NEG2026_CC,
+    label0 = "2024neg_onART_FMC", label1 = "2026neg_offART_CC",
+    note   = "Both toxo-negative; contrast is ART/cohort/region, NOT toxo."
+  ),
+  comp2_toxo_pos_vs_neg_CC = list(
+    keys0 = NEG2024_FMC, keys1 = POS_CC,
+    label0 = "neg_onART_FMC", label1 = "pos_offART_CC",
+    note   = "Toxo contrast, confounded with ART (pos off-ART, neg on-ART)."
+  ),
+  comp3_toxo_pos_vs_neg_BG = list(
+    keys0 = NEG2024_BG, keys1 = POS_BG,
+    label0 = "neg_onART_BG", label1 = "pos_offART_BG",
+    note   = "Toxo contrast (BG), confounded with ART (pos off-ART, neg on-ART)."
+  ),
   comp4_toxo_pos_vs_2026neg_CC = list(
     keys0 = NEG2026_CC, keys1 = POS_CC,
     label0 = "2026neg_offART_CC", label1 = "pos_offART_CC",
